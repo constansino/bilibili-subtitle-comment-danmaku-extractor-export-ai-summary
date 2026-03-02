@@ -630,6 +630,8 @@
     let offsetY = 0;
     handle.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
+      const settings = getSettings();
+      if ((settings.ui || {}).panelMode === "edgeAuto") return;
       dragging = true;
       const rect = panel.getBoundingClientRect();
       offsetX = e.clientX - rect.left;
@@ -672,6 +674,41 @@
         overflow: hidden;
         resize: both;
         font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      #${PANEL_ID}.bscas-edge-mode {
+        top: 74px;
+        right: 0 !important;
+        left: auto !important;
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+        transition: transform .2s ease, box-shadow .2s ease;
+      }
+      #${PANEL_ID}.bscas-edge-mode.bscas-collapsed {
+        transform: translateX(calc(100% - 16px));
+        box-shadow: 0 6px 18px rgba(0,0,0,.25);
+      }
+      #${PANEL_ID} .bscas-edge-tab {
+        position: absolute;
+        left: 0;
+        top: 38%;
+        width: 16px;
+        height: 120px;
+        border-radius: 8px 0 0 8px;
+        background: linear-gradient(180deg, #163053, #0f233d);
+        border: 1px solid #365578;
+        border-right: none;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        color: #d4e9ff;
+        font-size: 11px;
+        letter-spacing: 1px;
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        user-select: none;
+      }
+      #${PANEL_ID}.bscas-edge-mode .bscas-edge-tab {
+        display: flex;
       }
       #${PANEL_ID} * { box-sizing: border-box; }
       #${PANEL_ID} .bscas-main {
@@ -985,16 +1022,40 @@
     }
   }
 
+  function expandEdgePanel() {
+    const panel = UI.panel;
+    if (!panel) return;
+    panel.classList.remove("bscas-collapsed");
+    panel.style.display = "flex";
+  }
+
+  function collapseEdgePanel() {
+    const panel = UI.panel;
+    if (!panel) return;
+    panel.classList.add("bscas-collapsed");
+    panel.style.display = "flex";
+  }
+
   function showPanel() {
     const panel = UI.panel;
     if (!panel) return;
-    panel.style.display = "flex";
+    const settings = getSettings();
+    if ((settings.ui || {}).panelMode === "edgeAuto") {
+      expandEdgePanel();
+    } else {
+      panel.style.display = "flex";
+    }
   }
 
   function hidePanel() {
     const panel = UI.panel;
     if (!panel) return;
-    panel.style.display = "none";
+    const settings = getSettings();
+    if ((settings.ui || {}).panelMode === "edgeAuto") {
+      collapseEdgePanel();
+    } else {
+      panel.style.display = "none";
+    }
   }
 
   function scheduleEdgeCollapse() {
@@ -1003,7 +1064,7 @@
     clearEdgeCollapseTimer();
     const delay = withInt(settings.ui.edgeCollapseDelayMs, DEFAULT_SETTINGS.ui.edgeCollapseDelayMs, 80, 5000);
     STATE.edgeCollapseTimer = setTimeout(() => {
-      hidePanel();
+      collapseEdgePanel();
     }, delay);
   }
 
@@ -1018,11 +1079,17 @@
     if (mode === "edgeAuto") {
       floatBtn.style.display = "none";
       edge.style.display = "block";
-      hidePanel();
+      panel.classList.add("bscas-edge-mode");
+      panel.style.left = "auto";
+      panel.style.right = "0";
+      panel.style.display = "flex";
+      collapseEdgePanel();
     } else {
       edge.style.display = "none";
+      panel.classList.remove("bscas-edge-mode");
+      panel.classList.remove("bscas-collapsed");
       floatBtn.style.display = "block";
-      hidePanel();
+      panel.style.display = "none";
     }
   }
 
@@ -1696,6 +1763,8 @@
 
     const panel = el("div", { id: PANEL_ID });
     UI.panel = panel;
+    const edgeTab = el("div", { class: "bscas-edge-tab", text: "助手" });
+    panel.appendChild(edgeTab);
 
     const header = el("div", { class: "bscas-header" }, [
       el("div", { class: "bscas-title", text: "B站字幕/弹幕/评论提取导出 + AI总结" }),
@@ -1813,12 +1882,17 @@
       if ((settings.ui || {}).panelMode !== "edgeAuto") return;
       clearEdgeCollapseTimer();
       showPanel();
-      setActiveTab(settings.ui.defaultTab || "subtitle");
     });
     UI.edgeTrigger = edgeTrigger;
     document.body.appendChild(edgeTrigger);
 
-    panel.addEventListener("mouseenter", () => clearEdgeCollapseTimer());
+    panel.addEventListener("mouseenter", () => {
+      const settings = getSettings();
+      if ((settings.ui || {}).panelMode === "edgeAuto") {
+        clearEdgeCollapseTimer();
+        expandEdgePanel();
+      }
+    });
     panel.addEventListener("mouseleave", () => scheduleEdgeCollapse());
 
     const settings = getSettings();
