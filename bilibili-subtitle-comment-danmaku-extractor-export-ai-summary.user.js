@@ -53,11 +53,11 @@
       apiKey: "",
       model: "gpt-4o-mini",
       systemPrompt: "你是一个专业的视频内容分析助手。请根据输入材料，输出清晰、准确、结构化的中文结果。",
-      temperature: 0.3,
-      topP: 1,
-      maxTokens: 1200,
+      temperature: null,
+      topP: null,
+      maxTokens: null,
       timeoutMs: 60000,
-      stream: true,
+      stream: false,
     },
     data: {
       subtitleMaxLines: 800,
@@ -205,6 +205,164 @@
     if (Number.isFinite(min)) n = Math.max(min, n);
     if (Number.isFinite(max)) n = Math.min(max, n);
     return n;
+  }
+
+  function optionalNumber(value, min, max) {
+    const raw = String(value == null ? "" : value).trim();
+    if (!raw) return null;
+    let n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    if (Number.isFinite(min)) n = Math.max(min, n);
+    if (Number.isFinite(max)) n = Math.min(max, n);
+    return n;
+  }
+
+  function optionalInt(value, min, max) {
+    const raw = String(value == null ? "" : value).trim();
+    if (!raw) return null;
+    let n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) return null;
+    if (Number.isFinite(min)) n = Math.max(min, n);
+    if (Number.isFinite(max)) n = Math.min(max, n);
+    return n;
+  }
+
+  function escapeHtml(text) {
+    return String(text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderInlineMarkdown(line) {
+    let s = line;
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "<a href=\"$2\" target=\"_blank\" rel=\"noreferrer noopener\">$1</a>");
+    return s;
+  }
+
+  function markdownToHtml(mdText) {
+    const src = String(mdText || "").replace(/\r\n/g, "\n");
+    const escaped = escapeHtml(src);
+
+    const blocks = [];
+    let text = escaped.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (m, lang, code) => {
+      const idx = blocks.length;
+      const cls = lang ? ` class=\"lang-${lang}\"` : "";
+      blocks.push(`<pre><code${cls}>${code}</code></pre>`);
+      return `@@CODEBLOCK_${idx}@@`;
+    });
+
+    const lines = text.split("\n");
+    const out = [];
+    let inUl = false;
+    let inOl = false;
+    let inQuote = false;
+
+    function closeLists() {
+      if (inUl) {
+        out.push("</ul>");
+        inUl = false;
+      }
+      if (inOl) {
+        out.push("</ol>");
+        inOl = false;
+      }
+    }
+
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      const t = line.trim();
+
+      if (!t) {
+        closeLists();
+        if (inQuote) {
+          out.push("</blockquote>");
+          inQuote = false;
+        }
+        continue;
+      }
+
+      const codeToken = t.match(/^@@CODEBLOCK_(\d+)@@$/);
+      if (codeToken) {
+        closeLists();
+        if (inQuote) {
+          out.push("</blockquote>");
+          inQuote = false;
+        }
+        out.push(t);
+        continue;
+      }
+
+      const h = t.match(/^(#{1,6})\s+(.*)$/);
+      if (h) {
+        closeLists();
+        if (inQuote) {
+          out.push("</blockquote>");
+          inQuote = false;
+        }
+        const lv = h[1].length;
+        out.push(`<h${lv}>${renderInlineMarkdown(h[2])}</h${lv}>`);
+        continue;
+      }
+
+      const quote = t.match(/^>\s?(.*)$/);
+      if (quote) {
+        closeLists();
+        if (!inQuote) {
+          out.push("<blockquote>");
+          inQuote = true;
+        }
+        out.push(`<p>${renderInlineMarkdown(quote[1])}</p>`);
+        continue;
+      }
+      if (inQuote) {
+        out.push("</blockquote>");
+        inQuote = false;
+      }
+
+      const ul = t.match(/^[-*+]\s+(.*)$/);
+      if (ul) {
+        if (inOl) {
+          out.push("</ol>");
+          inOl = false;
+        }
+        if (!inUl) {
+          out.push("<ul>");
+          inUl = true;
+        }
+        out.push(`<li>${renderInlineMarkdown(ul[1])}</li>`);
+        continue;
+      }
+
+      const ol = t.match(/^\d+\.\s+(.*)$/);
+      if (ol) {
+        if (inUl) {
+          out.push("</ul>");
+          inUl = false;
+        }
+        if (!inOl) {
+          out.push("<ol>");
+          inOl = true;
+        }
+        out.push(`<li>${renderInlineMarkdown(ol[1])}</li>`);
+        continue;
+      }
+
+      closeLists();
+      out.push(`<p>${renderInlineMarkdown(t)}</p>`);
+    }
+
+    closeLists();
+    if (inQuote) out.push("</blockquote>");
+
+    let html = out.join("\n");
+    html = html.replace(/@@CODEBLOCK_(\d+)@@/g, (m, i) => blocks[Number(i)] || "");
+    return html;
   }
 
   function formatTime(seconds, forSrt) {
@@ -489,8 +647,12 @@
         position: fixed;
         top: 96px;
         right: 18px;
-        width: 520px;
-        max-height: 80vh;
+        width: 680px;
+        height: 74vh;
+        min-width: 460px;
+        min-height: 380px;
+        max-width: 92vw;
+        max-height: 92vh;
         z-index: 2147483646;
         background: #0f1622;
         color: #e6edf3;
@@ -500,9 +662,16 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        resize: both;
         font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
       }
       #${PANEL_ID} * { box-sizing: border-box; }
+      #${PANEL_ID} .bscas-main {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        flex: 1;
+      }
       #${PANEL_ID} .bscas-header {
         padding: 10px 12px;
         cursor: move;
@@ -563,11 +732,13 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
+        min-height: 0;
+        flex: 1;
       }
       #${PANEL_ID} .bscas-tab-page {
         display: none;
-        min-height: 250px;
-        max-height: 58vh;
+        min-height: 0;
+        height: 100%;
         overflow: auto;
       }
       #${PANEL_ID} .bscas-tab-page.active {
@@ -610,14 +781,51 @@
         border-radius: 10px;
         background: #0d141f;
         min-height: 220px;
-        max-height: 44vh;
+        height: calc(100% - 72px);
         overflow: auto;
         padding: 10px;
-        white-space: pre-wrap;
+        white-space: normal;
         word-break: break-word;
         line-height: 1.5;
         font-size: 13px;
       }
+      #${PANEL_ID} .bscas-summary-output p { margin: 0 0 8px; }
+      #${PANEL_ID} .bscas-summary-output h1,
+      #${PANEL_ID} .bscas-summary-output h2,
+      #${PANEL_ID} .bscas-summary-output h3,
+      #${PANEL_ID} .bscas-summary-output h4,
+      #${PANEL_ID} .bscas-summary-output h5,
+      #${PANEL_ID} .bscas-summary-output h6 { margin: 8px 0; color: #b7d8ff; }
+      #${PANEL_ID} .bscas-summary-output ul,
+      #${PANEL_ID} .bscas-summary-output ol { margin: 8px 0 8px 20px; padding: 0; }
+      #${PANEL_ID} .bscas-summary-output li { margin: 3px 0; }
+      #${PANEL_ID} .bscas-summary-output code {
+        background: #142238;
+        padding: 1px 4px;
+        border-radius: 4px;
+        color: #cfe6ff;
+        font-family: Consolas, "Courier New", monospace;
+      }
+      #${PANEL_ID} .bscas-summary-output pre {
+        background: #0a1019;
+        border: 1px solid #2f415a;
+        border-radius: 8px;
+        padding: 10px;
+        overflow: auto;
+        margin: 10px 0;
+      }
+      #${PANEL_ID} .bscas-summary-output pre code {
+        background: none;
+        padding: 0;
+        border-radius: 0;
+      }
+      #${PANEL_ID} .bscas-summary-output blockquote {
+        margin: 8px 0;
+        padding: 6px 10px;
+        border-left: 3px solid #4b729e;
+        background: #101a2a;
+      }
+      #${PANEL_ID} .bscas-summary-output a { color: #82bbff; }
       #${PANEL_ID} .bscas-status {
         color: #91bde8;
         font-size: 12px;
@@ -706,7 +914,8 @@
       error: `失败：${STATE.summaryError[tabId] || "未知错误"}`,
     };
     ui.status.textContent = `状态：${map[STATE.summaryStatus[tabId]] || "未执行"}`;
-    ui.output.textContent = STATE.summaryResults[tabId] || "";
+    const md = STATE.summaryResults[tabId] || "";
+    ui.output.innerHTML = md ? markdownToHtml(md) : "";
   }
 
   function setSummaryOutput(tabId, text, append = false) {
@@ -1012,11 +1221,15 @@
         { role: "system", content: llm.systemPrompt || "你是一个专业的中文分析助手。" },
         { role: "user", content: `${prompt}\n\n${input}` },
       ],
-      temperature: withNumber(llm.temperature, 0.3),
-      top_p: withNumber(llm.topP, 1),
-      max_tokens: withInt(llm.maxTokens, 1200, 1, 8192),
       stream: !forceNonStream && !!llm.stream,
     };
+
+    const temperature = optionalNumber(llm.temperature, 0, 2);
+    const topP = optionalNumber(llm.topP, 0, 1);
+    const maxTokens = optionalInt(llm.maxTokens, 1, 262144);
+    if (temperature != null) payload.temperature = temperature;
+    if (topP != null) payload.top_p = topP;
+    if (maxTokens != null) payload.max_tokens = maxTokens;
 
     if (payload.stream) {
       return callLlmStream(payload, {
@@ -1089,9 +1302,9 @@
     next.llm.apiKey = String(get("llm_apiKey")?.value || "").trim();
     next.llm.model = String(get("llm_model")?.value || "").trim();
     next.llm.systemPrompt = String(get("llm_systemPrompt")?.value || "").trim();
-    next.llm.temperature = withNumber(get("llm_temperature")?.value, DEFAULT_SETTINGS.llm.temperature);
-    next.llm.topP = withNumber(get("llm_topP")?.value, DEFAULT_SETTINGS.llm.topP);
-    next.llm.maxTokens = withInt(get("llm_maxTokens")?.value, DEFAULT_SETTINGS.llm.maxTokens, 1, 8192);
+    next.llm.temperature = optionalNumber(get("llm_temperature")?.value, 0, 2);
+    next.llm.topP = optionalNumber(get("llm_topP")?.value, 0, 1);
+    next.llm.maxTokens = optionalInt(get("llm_maxTokens")?.value, 1, 262144);
     next.llm.timeoutMs = withInt(get("llm_timeoutMs")?.value, DEFAULT_SETTINGS.llm.timeoutMs, 5000, 180000);
     next.llm.stream = !!get("llm_stream")?.checked;
 
@@ -1265,9 +1478,9 @@
         labelInput("API Key", el("input", { name: "llm_apiKey", type: "password", placeholder: "sk-..." }), "full"),
         labelInput("模型名", el("input", { name: "llm_model", type: "text", placeholder: "gpt-4o-mini" })),
         labelInput("流式输出", el("input", { name: "llm_stream", type: "checkbox" })),
-        labelInput("temperature", el("input", { name: "llm_temperature", type: "number", step: "0.1" })),
-        labelInput("top_p", el("input", { name: "llm_topP", type: "number", step: "0.1" })),
-        labelInput("max_tokens", el("input", { name: "llm_maxTokens", type: "number", step: "1" })),
+        labelInput("temperature（可空，留空不传）", el("input", { name: "llm_temperature", type: "number", step: "0.1", placeholder: "例如 0.7" })),
+        labelInput("top_p（可空，留空不传）", el("input", { name: "llm_topP", type: "number", step: "0.1", placeholder: "例如 1" })),
+        labelInput("max_tokens（可空，留空按模型最大）", el("input", { name: "llm_maxTokens", type: "number", step: "1", placeholder: "留空自动" })),
         labelInput("超时(毫秒)", el("input", { name: "llm_timeoutMs", type: "number", step: "1000" })),
         labelInput("System Prompt", el("textarea", { name: "llm_systemPrompt", rows: "4" }), "full"),
       ]),
