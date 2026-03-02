@@ -22,7 +22,8 @@
   const STYLE_ID = "bscas-style";
   const PANEL_ID = "bscas-panel";
   const FLOAT_BTN_ID = "bscas-float-btn";
-  const SETTINGS_KEY = "bscas-settings-v1";
+  const EDGE_TRIGGER_ID = "bscas-edge-trigger";
+  const SETTINGS_KEY = "bscas-settings-v2";
 
   const TAB_LIST = [
     { id: "subtitle", label: "字幕" },
@@ -47,6 +48,11 @@
   const DEFAULT_SETTINGS = {
     ui: {
       defaultTab: "subtitle",
+      panelMode: "edgeAuto",
+      edgeCollapseDelayMs: 280,
+      autoLoadSubtitle: true,
+      autoLoadDanmaku: false,
+      autoLoadComment: false,
     },
     llm: {
       apiUrl: "https://api.openai.com/v1/chat/completions",
@@ -122,11 +128,13 @@
       custom3: "",
     },
     autoTriggered: {},
+    edgeCollapseTimer: null,
   };
 
   const UI = {
     panel: null,
     floatBtn: null,
+    edgeTrigger: null,
     tabButtons: {},
     tabPages: {},
     subtitle: {
@@ -826,6 +834,21 @@
         background: #101a2a;
       }
       #${PANEL_ID} .bscas-summary-output a { color: #82bbff; }
+      #${PANEL_ID} .bscas-source-preview {
+        border: 1px solid #2f3d52;
+        border-radius: 10px;
+        background: #0b121d;
+        min-height: 92px;
+        max-height: 22vh;
+        overflow: auto;
+        padding: 8px;
+        margin-bottom: 8px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.45;
+        font-size: 12px;
+        color: #b8c9db;
+      }
       #${PANEL_ID} .bscas-status {
         color: #91bde8;
         font-size: 12px;
@@ -872,6 +895,15 @@
         color: #d4eaff;
         font-size: 12px;
         cursor: pointer;
+      }
+      #${EDGE_TRIGGER_ID} {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 10px;
+        height: 100vh;
+        z-index: 2147483644;
+        background: transparent;
       }
     `;
     document.head.appendChild(style);
@@ -922,6 +954,76 @@
     if (append) STATE.summaryResults[tabId] += text;
     else STATE.summaryResults[tabId] = text;
     updateSummaryUI(tabId);
+  }
+
+  function renderSourcePreview(tabId, text) {
+    const ui = UI.summary[tabId];
+    if (!ui || !ui.sourcePreview) return;
+    ui.sourcePreview.textContent = String(text || "").trim() || "暂无已拉取数据";
+  }
+
+  function renderDanmakuPreview(rows) {
+    const src = (rows || []).slice(0, 200).map((r) => `[${formatTime(r.from, false)}] ${r.text}`).join("\n");
+    renderSourcePreview("danmakuSummary", src);
+  }
+
+  function renderCommentPreview(rows) {
+    const src = commentsToText((rows || []).slice(0, 120));
+    renderSourcePreview("commentSummary", src);
+  }
+
+  function getPreferredTrackIndex() {
+    if (!STATE.tracks.length) return -1;
+    const idx = STATE.tracks.findIndex((t) => ["zh-CN", "zh-Hans", "ai-zh", "zh"].includes(t.lan));
+    return Math.max(0, idx);
+  }
+
+  function clearEdgeCollapseTimer() {
+    if (STATE.edgeCollapseTimer) {
+      clearTimeout(STATE.edgeCollapseTimer);
+      STATE.edgeCollapseTimer = null;
+    }
+  }
+
+  function showPanel() {
+    const panel = UI.panel;
+    if (!panel) return;
+    panel.style.display = "flex";
+  }
+
+  function hidePanel() {
+    const panel = UI.panel;
+    if (!panel) return;
+    panel.style.display = "none";
+  }
+
+  function scheduleEdgeCollapse() {
+    const settings = getSettings();
+    if ((settings.ui || {}).panelMode !== "edgeAuto") return;
+    clearEdgeCollapseTimer();
+    const delay = withInt(settings.ui.edgeCollapseDelayMs, DEFAULT_SETTINGS.ui.edgeCollapseDelayMs, 80, 5000);
+    STATE.edgeCollapseTimer = setTimeout(() => {
+      hidePanel();
+    }, delay);
+  }
+
+  function applyPanelMode(settings) {
+    const mode = (settings.ui || {}).panelMode || DEFAULT_SETTINGS.ui.panelMode;
+    const panel = UI.panel;
+    const floatBtn = UI.floatBtn;
+    const edge = UI.edgeTrigger;
+    if (!panel || !floatBtn || !edge) return;
+
+    clearEdgeCollapseTimer();
+    if (mode === "edgeAuto") {
+      floatBtn.style.display = "none";
+      edge.style.display = "block";
+      hidePanel();
+    } else {
+      edge.style.display = "none";
+      floatBtn.style.display = "block";
+      hidePanel();
+    }
   }
 
   function filterSubtitleRows(keyword) {
@@ -1003,17 +1105,25 @@
 
   async function ensureDanmakuLoaded() {
     if (!STATE.cid) throw new Error("未拿到 CID，无法拉取弹幕");
-    if (Array.isArray(STATE.danmakuRows)) return STATE.danmakuRows;
+    if (Array.isArray(STATE.danmakuRows)) {
+      renderDanmakuPreview(STATE.danmakuRows);
+      return STATE.danmakuRows;
+    }
     STATE.danmakuRows = await loadDanmakuRows(STATE.cid);
+    renderDanmakuPreview(STATE.danmakuRows);
     updateSubtitleMeta();
     return STATE.danmakuRows;
   }
 
   async function ensureCommentsLoaded() {
     if (!STATE.aid) throw new Error("未拿到 AID，无法拉取评论");
-    if (Array.isArray(STATE.commentRows)) return STATE.commentRows;
+    if (Array.isArray(STATE.commentRows)) {
+      renderCommentPreview(STATE.commentRows);
+      return STATE.commentRows;
+    }
     const settings = getSettings();
     STATE.commentRows = await loadCommentRows(STATE.aid, settings.data.commentPages);
+    renderCommentPreview(STATE.commentRows);
     updateSubtitleMeta();
     return STATE.commentRows;
   }
@@ -1297,6 +1407,11 @@
     const get = (name) => form.querySelector(`[name='${name}']`);
 
     next.ui.defaultTab = String(get("defaultTab")?.value || "subtitle");
+    next.ui.panelMode = String(get("panelMode")?.value || DEFAULT_SETTINGS.ui.panelMode);
+    next.ui.edgeCollapseDelayMs = withInt(get("edgeCollapseDelayMs")?.value, DEFAULT_SETTINGS.ui.edgeCollapseDelayMs, 80, 5000);
+    next.ui.autoLoadSubtitle = !!get("autoLoadSubtitle")?.checked;
+    next.ui.autoLoadDanmaku = !!get("autoLoadDanmaku")?.checked;
+    next.ui.autoLoadComment = !!get("autoLoadComment")?.checked;
 
     next.llm.apiUrl = String(get("llm_apiUrl")?.value || "").trim();
     next.llm.apiKey = String(get("llm_apiKey")?.value || "").trim();
@@ -1336,6 +1451,11 @@
     };
 
     set("defaultTab", settings.ui.defaultTab);
+    set("panelMode", settings.ui.panelMode);
+    set("edgeCollapseDelayMs", settings.ui.edgeCollapseDelayMs);
+    set("autoLoadSubtitle", settings.ui.autoLoadSubtitle);
+    set("autoLoadDanmaku", settings.ui.autoLoadDanmaku);
+    set("autoLoadComment", settings.ui.autoLoadComment);
 
     set("llm_apiUrl", settings.llm.apiUrl);
     set("llm_apiKey", settings.llm.apiKey);
@@ -1359,6 +1479,9 @@
   function buildSummaryTab(tabId, label) {
     const page = el("div", { class: "bscas-tab-page", "data-tab": tabId });
     const status = el("div", { class: "bscas-status", text: "状态：未执行" });
+    const sourcePreview = (tabId === "danmakuSummary" || tabId === "commentSummary")
+      ? el("div", { class: "bscas-source-preview", text: "暂无已拉取数据" })
+      : null;
     const output = el("div", { class: "bscas-summary-output" });
 
     const footerButtons = [
@@ -1450,9 +1573,10 @@
     page.appendChild(el("div", { class: "bscas-mini", text: `${label}：支持手动/自动触发，提示词可在设置中自定义。` }));
     page.appendChild(el("div", { class: "bscas-footer" }, footerButtons));
     page.appendChild(status);
+    if (sourcePreview) page.appendChild(sourcePreview);
     page.appendChild(output);
 
-    UI.summary[tabId] = { status, output };
+    UI.summary[tabId] = { status, output, sourcePreview };
     return page;
   }
   function buildSettingsTab() {
@@ -1468,6 +1592,14 @@
       el("div", { class: "bscas-setting-title", text: "界面设置" }),
       el("div", { class: "bscas-setting-grid" }, [
         labelInput("默认打开导航页", el("select", { name: "defaultTab" }, TAB_LIST.filter((t) => t.id !== "settings").map((t) => el("option", { value: t.id, text: t.label })))),
+        labelInput("弹窗模式", el("select", { name: "panelMode" }, [
+          el("option", { value: "edgeAuto", text: "边缘悬停自动弹出/收回（默认）" }),
+          el("option", { value: "buttonManual", text: "悬浮按钮手动开关" }),
+        ]), "full"),
+        labelInput("边缘收回延迟(ms)", el("input", { name: "edgeCollapseDelayMs", type: "number", step: "50", placeholder: "280" })),
+        labelInput("自动拉取字幕并展示", el("input", { name: "autoLoadSubtitle", type: "checkbox" })),
+        labelInput("自动拉取弹幕并展示", el("input", { name: "autoLoadDanmaku", type: "checkbox" })),
+        labelInput("自动拉取评论并展示", el("input", { name: "autoLoadComment", type: "checkbox" })),
       ]),
     ]);
 
@@ -1529,6 +1661,7 @@
           const next = collectSettingsForm();
           saveSettings(next);
           UI.settings.status.textContent = "设置已保存";
+          applyPanelMode(next);
           setActiveTab(next.ui.defaultTab || "subtitle");
         },
       }),
@@ -1540,6 +1673,7 @@
           saveSettings(d);
           fillSettingsForm(d);
           UI.settings.status.textContent = "已恢复默认设置";
+          applyPanelMode(d);
         },
       }),
       el("button", { text: "测试LLM连通", onclick: () => testLlmConnection() }),
@@ -1613,6 +1747,17 @@
     subtitlePage.appendChild(el("div", { class: "bscas-row" }, [searchInput]));
     subtitlePage.appendChild(list);
     subtitlePage.appendChild(el("div", { class: "bscas-footer" }, [
+      el("button", {
+        text: "拉取字幕",
+        onclick: async () => {
+          if (!STATE.tracks.length) return;
+          let idx = Number(UI.subtitle.trackSelect?.value || -1);
+          if (!Number.isFinite(idx) || idx < 0) idx = getPreferredTrackIndex();
+          if (idx < 0) return;
+          if (UI.subtitle.trackSelect) UI.subtitle.trackSelect.value = String(idx);
+          await selectSubtitleTrack(idx);
+        },
+      }),
       el("button", { text: "复制纯文本", onclick: () => copyText(subtitlesToText(STATE.filteredSubtitles)) }),
       el("button", { text: "复制时间轴", onclick: () => copyText(subtitlesToTimeline(STATE.filteredSubtitles)) }),
       el("button", { text: "复制SRT", onclick: () => copyText(toSrt(STATE.filteredSubtitles)) }),
@@ -1651,6 +1796,7 @@
       text: "视频助手",
       onclick: () => {
         const show = panel.style.display === "none";
+        clearEdgeCollapseTimer();
         panel.style.display = show ? "flex" : "none";
         if (show) {
           const settings = getSettings();
@@ -1661,9 +1807,24 @@
     UI.floatBtn = floatBtn;
     document.body.appendChild(floatBtn);
 
+    const edgeTrigger = el("div", { id: EDGE_TRIGGER_ID });
+    edgeTrigger.addEventListener("mouseenter", () => {
+      const settings = getSettings();
+      if ((settings.ui || {}).panelMode !== "edgeAuto") return;
+      clearEdgeCollapseTimer();
+      showPanel();
+      setActiveTab(settings.ui.defaultTab || "subtitle");
+    });
+    UI.edgeTrigger = edgeTrigger;
+    document.body.appendChild(edgeTrigger);
+
+    panel.addEventListener("mouseenter", () => clearEdgeCollapseTimer());
+    panel.addEventListener("mouseleave", () => scheduleEdgeCollapse());
+
     const settings = getSettings();
     fillSettingsForm(settings);
     setActiveTab(settings.ui.defaultTab || "subtitle");
+    applyPanelMode(settings);
     renderSubtitleList();
   }
 
@@ -1692,10 +1853,13 @@
     STATE.danmakuRows = null;
     STATE.commentRows = null;
     clearSummaryCache();
+    renderSourcePreview("danmakuSummary", "");
+    renderSourcePreview("commentSummary", "");
   }
 
   async function refreshAll() {
     try {
+      const settings = getSettings();
       const bvid = getBvidFromUrl(location.href);
       if (!bvid) return;
       resetForNewVideo(bvid);
@@ -1722,13 +1886,36 @@
       renderTrackOptions();
 
       if (STATE.tracks.length) {
-        const prefIndex = Math.max(0, STATE.tracks.findIndex((t) => ["zh-CN", "zh-Hans", "ai-zh", "zh"].includes(t.lan)));
+        const prefIndex = getPreferredTrackIndex();
         if (UI.subtitle.trackSelect) UI.subtitle.trackSelect.value = String(prefIndex);
-        await selectSubtitleTrack(prefIndex);
+        if (settings.ui.autoLoadSubtitle) {
+          await selectSubtitleTrack(prefIndex);
+        } else {
+          STATE.activeTrack = STATE.tracks[prefIndex] || null;
+          STATE.subtitles = [];
+          filterSubtitleRows("");
+          updateSubtitleMeta();
+        }
       } else {
         STATE.subtitles = [];
         filterSubtitleRows("");
         updateSubtitleMeta();
+      }
+
+      if (settings.ui.autoLoadDanmaku) {
+        try {
+          await ensureDanmakuLoaded();
+        } catch (e) {
+          console.warn("[BSCAS] auto load danmaku failed", e);
+        }
+      }
+
+      if (settings.ui.autoLoadComment) {
+        try {
+          await ensureCommentsLoaded();
+        } catch (e) {
+          console.warn("[BSCAS] auto load comments failed", e);
+        }
       }
 
       await maybeAutoRunSummaries();
