@@ -22,7 +22,6 @@
   const STYLE_ID = "bscas-style";
   const PANEL_ID = "bscas-panel";
   const FLOAT_BTN_ID = "bscas-float-btn";
-  const EDGE_TRIGGER_ID = "bscas-edge-trigger";
   const SETTINGS_KEY = "bscas-settings-v2";
 
   const TAB_LIST = [
@@ -134,7 +133,6 @@
   const UI = {
     panel: null,
     floatBtn: null,
-    edgeTrigger: null,
     tabButtons: {},
     tabPages: {},
     subtitle: {
@@ -648,6 +646,35 @@
       dragging = false;
     });
   }
+
+  function makeResizableFromLeft(panel, handle) {
+    let resizing = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    handle.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      const settings = getSettings();
+      if ((settings.ui || {}).panelMode !== "edgeAuto") return;
+      resizing = true;
+      startX = e.clientX;
+      startWidth = panel.getBoundingClientRect().width;
+      e.preventDefault();
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (!resizing) return;
+      const minWidth = 320;
+      const maxWidth = Math.max(minWidth, Math.min(window.innerWidth - 20, 960));
+      const delta = startX - e.clientX;
+      const nextWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + delta));
+      panel.style.width = `${Math.round(nextWidth)}px`;
+    });
+
+    document.addEventListener("mouseup", () => {
+      resizing = false;
+    });
+  }
   function injectStyle() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
@@ -655,60 +682,102 @@
     style.textContent = `
       #${PANEL_ID} {
         position: fixed;
-        top: 96px;
-        right: 18px;
-        width: 680px;
-        height: 74vh;
-        min-width: 460px;
-        min-height: 380px;
-        max-width: 92vw;
-        max-height: 92vh;
+        top: 0;
+        right: 0;
+        width: clamp(380px, 34vw, 560px);
+        height: 100vh;
+        min-width: 320px;
+        min-height: 100vh;
+        max-width: 94vw;
+        max-height: 100vh;
         z-index: 2147483646;
         background: #0f1622;
         color: #e6edf3;
-        border: 1px solid #2b3b52;
-        border-radius: 14px;
-        box-shadow: 0 16px 36px rgba(0,0,0,.38);
+        border-left: 1px solid #2b3b52;
+        border-radius: 0;
+        box-shadow: -14px 0 34px rgba(0,0,0,.38);
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        resize: both;
+        resize: none;
         font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+        transition: transform .24s ease, box-shadow .2s ease;
+      }
+      #${PANEL_ID}.bscas-manual-mode {
+        top: 96px;
+        right: 18px;
+        height: 74vh;
+        min-height: 380px;
+        max-height: 92vh;
+        border: 1px solid #2b3b52;
+        border-radius: 14px;
+        box-shadow: 0 16px 36px rgba(0,0,0,.38);
+        resize: both;
       }
       #${PANEL_ID}.bscas-edge-mode {
-        top: 74px;
+        top: 0 !important;
         right: 0 !important;
         left: auto !important;
+        height: 100vh !important;
+        min-height: 100vh !important;
+        max-height: 100vh !important;
+        border-left: 1px solid #2b3b52;
+        border-radius: 0;
         border-top-right-radius: 0;
         border-bottom-right-radius: 0;
-        transition: transform .2s ease, box-shadow .2s ease;
       }
       #${PANEL_ID}.bscas-edge-mode.bscas-collapsed {
-        transform: translateX(calc(100% - 16px));
-        box-shadow: 0 6px 18px rgba(0,0,0,.25);
+        transform: translateX(calc(100% - 42px));
+        box-shadow: none;
+      }
+      #${PANEL_ID}.bscas-edge-mode.bscas-collapsed .bscas-header,
+      #${PANEL_ID}.bscas-edge-mode.bscas-collapsed .bscas-main,
+      #${PANEL_ID}.bscas-edge-mode.bscas-collapsed .bscas-resizer {
+        opacity: 0;
+        pointer-events: none;
       }
       #${PANEL_ID} .bscas-edge-tab {
         position: absolute;
         left: 0;
-        top: 38%;
-        width: 16px;
-        height: 120px;
-        border-radius: 8px 0 0 8px;
-        background: linear-gradient(180deg, #163053, #0f233d);
-        border: 1px solid #365578;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 42px;
+        height: 150px;
+        border-radius: 12px 0 0 12px;
+        background: linear-gradient(180deg, #17406d, #112949);
+        border: 1px solid #3e658d;
         border-right: none;
         display: none;
         align-items: center;
         justify-content: center;
-        color: #d4e9ff;
-        font-size: 11px;
+        color: #d8ecff;
+        font-size: 12px;
+        font-weight: 600;
         letter-spacing: 1px;
         writing-mode: vertical-rl;
         text-orientation: mixed;
         user-select: none;
+        cursor: pointer;
+        z-index: 4;
       }
       #${PANEL_ID}.bscas-edge-mode .bscas-edge-tab {
         display: flex;
+      }
+      #${PANEL_ID} .bscas-resizer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 8px;
+        height: 100%;
+        cursor: ew-resize;
+        background: transparent;
+        z-index: 3;
+      }
+      #${PANEL_ID}.bscas-manual-mode .bscas-resizer {
+        display: none;
+      }
+      #${PANEL_ID}.bscas-edge-mode .bscas-resizer:hover {
+        background: rgba(141, 181, 223, .18);
       }
       #${PANEL_ID} * { box-sizing: border-box; }
       #${PANEL_ID} .bscas-main {
@@ -719,13 +788,16 @@
       }
       #${PANEL_ID} .bscas-header {
         padding: 10px 12px;
-        cursor: move;
+        cursor: default;
         background: linear-gradient(90deg, #152237, #111925);
         border-bottom: 1px solid #2a3442;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
+      }
+      #${PANEL_ID}.bscas-manual-mode .bscas-header {
+        cursor: move;
       }
       #${PANEL_ID} .bscas-title {
         font-weight: 700;
@@ -933,14 +1005,19 @@
         font-size: 12px;
         cursor: pointer;
       }
-      #${EDGE_TRIGGER_ID} {
-        position: fixed;
-        top: 0;
-        right: 0;
-        width: 10px;
-        height: 100vh;
-        z-index: 2147483644;
-        background: transparent;
+      @media (max-width: 900px) {
+        #${PANEL_ID} {
+          width: min(92vw, 520px);
+          min-width: 280px;
+        }
+        #${PANEL_ID}.bscas-manual-mode {
+          right: 8px;
+          top: 62px;
+          width: min(94vw, 560px);
+          height: 80vh;
+          min-height: 300px;
+          max-height: 86vh;
+        }
       }
     `;
     document.head.appendChild(style);
@@ -1036,17 +1113,6 @@
     panel.style.display = "flex";
   }
 
-  function showPanel() {
-    const panel = UI.panel;
-    if (!panel) return;
-    const settings = getSettings();
-    if ((settings.ui || {}).panelMode === "edgeAuto") {
-      expandEdgePanel();
-    } else {
-      panel.style.display = "flex";
-    }
-  }
-
   function hidePanel() {
     const panel = UI.panel;
     if (!panel) return;
@@ -1072,22 +1138,31 @@
     const mode = (settings.ui || {}).panelMode || DEFAULT_SETTINGS.ui.panelMode;
     const panel = UI.panel;
     const floatBtn = UI.floatBtn;
-    const edge = UI.edgeTrigger;
-    if (!panel || !floatBtn || !edge) return;
+    if (!panel || !floatBtn) return;
 
     clearEdgeCollapseTimer();
     if (mode === "edgeAuto") {
-      floatBtn.style.display = "none";
-      edge.style.display = "block";
+      panel.classList.remove("bscas-manual-mode");
       panel.classList.add("bscas-edge-mode");
       panel.style.left = "auto";
+      panel.style.top = "0";
       panel.style.right = "0";
+      panel.style.height = "100vh";
+      panel.style.minHeight = "100vh";
+      panel.style.maxHeight = "100vh";
       panel.style.display = "flex";
+      floatBtn.style.display = "none";
       collapseEdgePanel();
     } else {
-      edge.style.display = "none";
+      panel.classList.add("bscas-manual-mode");
       panel.classList.remove("bscas-edge-mode");
       panel.classList.remove("bscas-collapsed");
+      panel.style.left = "";
+      panel.style.top = "";
+      panel.style.right = "";
+      panel.style.height = "";
+      panel.style.minHeight = "";
+      panel.style.maxHeight = "";
       floatBtn.style.display = "block";
       panel.style.display = "none";
     }
@@ -1763,6 +1838,8 @@
 
     const panel = el("div", { id: PANEL_ID });
     UI.panel = panel;
+    const resizer = el("div", { class: "bscas-resizer" });
+    panel.appendChild(resizer);
     const edgeTab = el("div", { class: "bscas-edge-tab", text: "助手" });
     panel.appendChild(edgeTab);
 
@@ -1777,7 +1854,7 @@
             body.style.display = body.style.display === "none" ? "flex" : "none";
           },
         }),
-        el("button", { text: "×", onclick: () => { panel.style.display = "none"; } }),
+        el("button", { text: "×", onclick: () => hidePanel() }),
       ]),
     ]);
 
@@ -1859,6 +1936,7 @@
     panel.appendChild(main);
     document.body.appendChild(panel);
     makeDraggable(panel, header);
+    makeResizableFromLeft(panel, resizer);
 
     const floatBtn = el("button", {
       id: FLOAT_BTN_ID,
@@ -1876,15 +1954,16 @@
     UI.floatBtn = floatBtn;
     document.body.appendChild(floatBtn);
 
-    const edgeTrigger = el("div", { id: EDGE_TRIGGER_ID });
-    edgeTrigger.addEventListener("mouseenter", () => {
+    edgeTab.addEventListener("click", () => {
       const settings = getSettings();
       if ((settings.ui || {}).panelMode !== "edgeAuto") return;
-      clearEdgeCollapseTimer();
-      showPanel();
+      if (panel.classList.contains("bscas-collapsed")) {
+        clearEdgeCollapseTimer();
+        expandEdgePanel();
+      } else {
+        collapseEdgePanel();
+      }
     });
-    UI.edgeTrigger = edgeTrigger;
-    document.body.appendChild(edgeTrigger);
 
     panel.addEventListener("mouseenter", () => {
       const settings = getSettings();
